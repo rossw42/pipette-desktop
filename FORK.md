@@ -86,7 +86,7 @@ The file looks like this:
 `keyboard` is informational — import does **not** require it to match, so labels can be moved
 onto a rebuilt or renamed board (a common reason to have a backup at all).
 
-**Implementation** (15 files, ~2k lines, mostly new)
+**Implementation** (10 files, ~1.9k lines added, mostly new — tests are two of them)
 
 | File | Role |
 |---|---|
@@ -120,24 +120,41 @@ Worth knowing if you touch this: the encodings are decoded with **numeric bit ma
 which silently breaks parsing. Also `TO(n)` sets the `ON_PRESS` bit on **both** protocols
 (v6 `TO(3)` = `0x5213`), so it must be matched before the other v6 ops or you get "layer 19".
 
-### 3. Fork maintenance tooling
+### 3. Windows build & launch fixes
+
+Upstream's Windows scripts didn't work on this machine, and one of them failed *silently*. All
+three fixes are in `package.json` / `pnpm-workspace.yaml` / `scripts/`, none touch app code:
+
+| File | Fix |
+|---|---|
+| `scripts/clean-build-dirs.mjs` | replaces the `if exist out (rd /s /q "out") && ...` cmd.exe chain in `build:win` / `dist:win`. cmd bound the whole `&&` chain to the first `if`, so when `out\` was absent **the build and packaging steps were skipped and the script still exited 0** — a 3-second "successful" build that produced no `dist\`. The Node version deletes the directories and refuses to touch anything outside the repo. |
+| `scripts/postinstall.mjs` | upstream's `postinstall` was a bare `electron-rebuild`, whose (expected) failure without VS C++ build tools aborted the install. Now the rebuild failure is a *warning*, and only a missing `node_modules/electron/dist/electron.exe` is fatal — which it also repairs by re-running electron's `install.js`. |
+| `pnpm-workspace.yaml` | `better-sqlite3: false` in `allowBuilds` (its `node-gyp` build killed the whole install before the `.bin` shims were written) and `verifyDepsBeforeRun: false` (pnpm 11's pre-run re-link was deleting `node_modules/electron/dist/`). |
+
+Net effect: `pnpm install` → `pnpm dev` and `pnpm dist:win` both work with **no Visual Studio C++
+build tools installed** — every native dep ships a Windows x64 prebuild. Full story in
+[Gotchas](#gotchas-on-this-machine-windows).
+
+### 4. Fork maintenance tooling
 
 `scripts/sync-upstream.mjs` and `scripts/verify-fork.mjs` — see below.
 
 ### Tests
 
-90 tests cover the above and run in CI-less isolation:
+97 tests across 4 files cover the above and run in CI-less isolation:
 
 - `src/renderer/components/editors/__tests__/KeymapEditor.keyNotes.test.tsx` (31) — renders the
   **real** `KeyboardWidget` and asserts on SVG `<text>` scoped by `data-key-pos`. All four test
   keys deliberately hold the *same* keycode (`KC_A`), so only genuinely position-keyed data can
   make them differ.
+- `src/renderer/components/editors/__tests__/key-notes-file.test.ts` (37) — the save/load sidecar
+  layer: serialize round-trips, envelope rejection, merge vs replace, and malformed-entry counting.
 - `src/renderer/typing-test/__tests__/matrix-layer-latch-toggle.test.ts` (23) — every layer op on
   both protocols.
 - `src/renderer/typing-test/__tests__/useTypingTest.toggleLayer.test.ts` (6) — end-to-end through
   the real hook.
 
-Run just these: `node scripts/verify-fork.mjs --ours`
+Run just these: `node scripts/verify-fork.mjs --ours` (~7 s; last run 97/97, 0 type errors).
 
 ---
 
@@ -218,9 +235,11 @@ git diff upstream/main..main --stat -- src/main   # empty ⇒ every src/main fil
 git diff upstream/main..main --name-only          # the full list of what we changed
 ```
 
-Our changes are **renderer-only**. So any failure in `src/main/**` cannot be caused by this fork
-— that's how `sync-service.test.ts` was ruled out in seconds without a single test run. Reach for
-this first; only fall back to an A/B test run when the failing file *is* one we touch.
+Our application changes are **renderer-only** — everything else we touch is build tooling
+(`package.json`, `pnpm-workspace.yaml`, `scripts/`), and `src/main/**` is byte-identical to
+upstream. So any failure in `src/main/**` cannot be caused by this fork — that's how
+`sync-service.test.ts` was ruled out in seconds without a single test run. Reach for this first;
+only fall back to an A/B test run when the failing file *is* one we touch.
 
 If you do need the A/B run, use a **worktree** rather than `git stash` + `git checkout`:
 

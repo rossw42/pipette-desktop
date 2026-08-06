@@ -7,11 +7,26 @@ Refining the way you interact with your Vial-powered keyboards.
 Pipette is an independent, Electron-based keymap editor compatible with [Vial](https://get.vial.today/).  \
 Communicates with Vial keyboards via USB HID to configure keymaps, macros, lighting, and more.
 
-> **This is [rossw42](https://github.com/rossw42/pipette-desktop)'s fork** of
-> [darakuneko/pipette-desktop](https://github.com/darakuneko/pipette-desktop). It adds
-> **Key Notes** (user-editable semantic key labels drawn on the keys) and a fix for layer
-> toggles in Typing View. See **[FORK.md](./FORK.md)** for what's different and how the fork
-> is kept in sync with upstream. Everything below is upstream's documentation and applies here too.
+> ### This is [rossw42](https://github.com/rossw42/pipette-desktop)'s fork
+>
+> A fork of [darakuneko/pipette-desktop](https://github.com/darakuneko/pipette-desktop),
+> currently based on upstream **v0.4.15**. What it adds:
+>
+> - **Key Notes** — user-editable semantic key labels drawn on the keys (per keyboard, per
+>   layer, per matrix position), visible in the editor, Typing View, and the always-on-top
+>   overlay. Save/load them as a `.json` sidecar file.
+> - **Typing View layer fix** — the layer indicator now follows `TG()`/`TO()`/`TT()`/`DF()`
+>   toggles, not just momentary `MO`/`LT`/`LM`.
+> - **Windows build/launch fixes** — `pnpm dev` and `pnpm dist:win` work without Visual Studio
+>   C++ build tools, and `dist:win` no longer exits 0 without building anything.
+> - **Fork maintenance tooling** — `scripts/sync-upstream.mjs` and `scripts/verify-fork.mjs`.
+>
+> **The download links below are upstream's releases and do not contain these changes.** This
+> fork publishes no binaries; build it yourself (`pnpm install` then `pnpm dist:win`, and run
+> `dist\win-unpacked\Pipette.exe`).
+>
+> See **[FORK.md](./FORK.md)** for the details, the known-broken upstream tests, and how the
+> fork is kept in sync. Everything below is upstream's documentation and applies here too.
 
 [![Electron](https://img.shields.io/badge/Electron-47848F?style=flat&logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![React](https://img.shields.io/badge/React_19-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
