@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useCallback, useEffect, useMemo, useRef, useImperativeHandle, forwardRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useImperativeHandle, forwardRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useTileContentOverride } from '../../hooks/useTileContentOverride'
 import { ViewMatrixPanel } from './ViewMatrixPanel'
@@ -29,7 +29,10 @@ import { useKeymapPackTabs } from './use-keymap-pack-tabs'
 import { KeymapPickerRegion } from './KeymapPickerRegion'
 import { KeymapPrimaryPane } from './KeymapPrimaryPane'
 import { sortKeysByViewMatrix } from './view-matrix'
+import { useKeyNotes, mergeLabelOverrides } from './key-notes-store'
+import { KeyNotesPanel } from './KeyNotesPanel'
 import type { LineSnapshot } from '../../typing-test/TypingTestView'
+
 
 export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEditorHandle, Props>(function KeymapEditor(props, ref) {
   // Kept as a whole object (not just destructured) so the typing-test
@@ -165,12 +168,36 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
     matrixMode, handleMatrixToggle, handleDeselect, handleKeycodeSelect,
   })
 
+  // --- Label view / Key Notes (see `key-notes-store.ts`) ---
+  // User-authored semantic legends ("Bulldoze" instead of "B"), keyed by
+  // layer + matrix position and merged into the SAME `labelOverrides` map the
+  // renderer already consumes — so no new prop reaches `KeyWidget`.
+  //
+  // TWO independent lookups because the two surfaces track different layers:
+  // the editor pane follows `currentLayer`, the typing/overlay view follows
+  // the test's own effective (latched) layer. Legends always render (that's
+  // the point of the feature); `labelViewOpen` only controls whether the
+  // EDITING panel is showing in place of the keycode picker.
+  const keyNotes = useKeyNotes(keyboardUid)
+  const [labelViewOpen, setLabelViewOpen] = useState(false)
+  const toggleLabelView = useCallback(() => { setLabelViewOpen((v) => !v) }, [])
+  const editorKeyNoteOverrides = keyNotes.overridesForLayer(currentLayer)
+  const typingViewKeyNoteOverrides = keyNotes.overridesForLayer(typingTest.effectiveLayer)
+  // View Matrix mode's R/C legends stay authoritative — `mergeLabelOverrides`
+  // gives its map precedence on collisions.
+  const primaryLabelOverrides = mergeLabelOverrides(viewMatrixPaneProps.viewMatrixLabelOverrides, editorKeyNoteOverrides)
+  const selectedKeyLegend = selectedKey
+    ? keyNotes.getLegend(currentLayer, selectedKey.row, selectedKey.col)
+    : ''
+
+
   // Surface the editor test's run state so the host can disable the
   // StatusBar "View Analytics" button mid-run (it lives in the footer, not
   // this component). False whenever the test isn't running or mode is off.
   useEffect(() => {
     onTypingTestRunningChange?.(!!typingTestMode && typingTest.state.status === 'running')
   }, [typingTestMode, typingTest.state.status, onTypingTestRunningChange])
+
 
   // --- Escape clears picker selection ---
   useEffect(() => {
@@ -327,8 +354,13 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
             canUndo={history.canUndo} canRedo={history.canRedo}
             onUndo={handleUndo} onRedo={handleRedo}
             scale={scaleProp} onScaleChange={onScaleChange}
+            labelViewActive={labelViewOpen} onToggleLabelView={toggleLabelView}
+            labelsVisible={keyNotes.visible} onToggleLabelsVisible={keyNotes.toggleVisible}
+            hasLabels={keyNotes.hasAnyNotes}
           />
         )}
+
+
         {/* View Matrix mode's left pane — replaces the layer selector slot
             that normally sits below, since this row is now the only one
             rendered (the keycode picker row is hidden for the mode's
@@ -390,8 +422,14 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
               onResumeTest={resumeTypingTest}
               onRestartTestFromStart={restartTypingTestFromStart}
               lineSnapshotRef={lineSnapshotRef}
+              labelOverrides={typingViewKeyNoteOverrides}
+              labelsVisible={keyNotes.visible}
+              onToggleLabelsVisible={keyNotes.toggleVisible}
+              hasLabels={keyNotes.hasAnyNotes}
             />
+
           ) : (
+
             <>
               {/* Simulation/Base tabs: the vertical tab strip sits to the
                   RIGHT of the keymap pane, attached flush to its edge
@@ -421,6 +459,7 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
                 auxUndoHandlers={viewMatrixMode.active ? undefined : auxUndoHandlers} hoverMacros={deserializedMacros} hoverTapDance={tapDanceEntries}
                 layerHoverPreview={{ layers, currentLayer, keymap, encoderLayout, encoderCount, isRemapped, layerLabel, deviceKey: keyboardUid, blocked: !!popoverState || pickerSelectedIndices.size > 0, enabled: layerHoverPreviewEnabled }}
                 {...viewMatrixPaneProps}
+                viewMatrixLabelOverrides={primaryLabelOverrides}
               />
               {/* The relocated zoom row the toolbar comment above points to
                   — see `ViewMatrixZoomRow` for what it contains and why. */}
@@ -454,9 +493,30 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
           only surface, and its own toggle is the sole way back to normal
           editing. Rendered as a SIBLING of `keymap-surface` above, never
           inside it — see `KeymapPickerRegion`. */}
-      {!typingTestMode && !viewMatrixMode.active && (
+      {/* Label view: the editing surface for Key Notes, shown in place of the
+          keycode picker so the keymap pane above stays visible (you click a
+          key up there, type its label down here, and watch the legend change
+          live). Mutually exclusive with the picker rather than stacked, since
+          both compete for the same vertical space. */}
+      {!typingTestMode && !viewMatrixMode.active && labelViewOpen && (
+        <KeyNotesPanel
+          layer={currentLayer}
+          selectedKey={selectedKey}
+          legend={selectedKeyLegend}
+          notes={keyNotes.notes}
+          onSetLegend={keyNotes.setLegend}
+          onClearAll={keyNotes.clearAll}
+          onClose={toggleLabelView}
+          visible={keyNotes.visible}
+          onToggleVisible={keyNotes.toggleVisible}
+        />
+      )}
+
+
+      {!typingTestMode && !viewMatrixMode.active && !labelViewOpen && (
         <KeymapPickerRegion
           {...props}
+
           layerPanelCollapsed={layerPanelCollapsed} toggleLayerPanel={toggleLayerPanel}
           layoutPickerContent={layoutPickerContent} onKeyboardTabVisibleChange={setKeyboardTabVisible} packTabReadOnly={packTabReadOnly}
           gatedHandleKeycodeSelect={gatedHandleKeycodeSelect} handlePickerMultiSelect={handlePickerMultiSelect}

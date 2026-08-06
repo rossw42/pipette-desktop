@@ -30,7 +30,20 @@ export interface TypingTestPaneProps {
   /** Active Key Label pack's per-key legend override — see
    *  `KeyboardWidget`'s `remapLabel`. */
   remapLabel?: (qmkId: string) => string
+  /** Per-key legend override keyed `posKey(row, col)` — passed straight to
+   *  the keymap pane's `KeyboardWidget`, the same contract the editor
+   *  surface uses. Key Notes (semantic per-position legends) reach the
+   *  floating typing view through this. */
+  labelOverrides?: Map<string, { outer: string; inner: string; masked: boolean }>
+  /** Key Notes show/hide, surfaced in view-only mode's own popover menu —
+   *  the editor toolbar (which has the same control) isn't rendered here.
+   *  See `TypingTestPaneViewOnlyMenu`. */
+  labelsVisible?: boolean
+  onToggleLabelsVisible?: () => void
+  hasLabels?: boolean
   layoutOptions: Map<number, number>
+
+
   scale: number
   keys: KleKey[]
   layerLabel: string

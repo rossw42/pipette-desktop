@@ -2,7 +2,9 @@
 
 import { useState, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ZoomIn, ZoomOut, Undo2, Redo2 } from 'lucide-react'
+import { ZoomIn, ZoomOut, Undo2, Redo2, Tags, Eye, EyeOff } from 'lucide-react'
+
+
 import { MIN_SCALE, MAX_SCALE, PANEL_COLLAPSED_WIDTH } from './keymap-editor-types'
 import { TOOLBAR_BTN_ACTIVE, TOOLBAR_BTN_INACTIVE, ICON_MD, ICON_SM } from '../../constants/ui-tokens'
 import { Tooltip } from '../ui/Tooltip'
@@ -67,7 +69,20 @@ export interface KeymapToolbarProps {
   onRedo: () => Promise<void>
   scale: number
   onScaleChange?: (delta: number) => void
+  /** Label view (Key Notes) on/off. Optional so existing callers/tests that
+   *  don't know about the feature keep working — the button simply isn't
+   *  rendered without a handler. */
+  labelViewActive?: boolean
+  onToggleLabelView?: () => void
+  /** Whether the labels are currently drawn on the keys. Drives the separate
+   *  show/hide button below, which only appears once there is at least one
+   *  label to show (`hasLabels`) — a toggle that visibly does nothing is worse
+   *  than no toggle. */
+  labelsVisible?: boolean
+  onToggleLabelsVisible?: () => void
+  hasLabels?: boolean
 }
+
 
 /** The editor's left side rail: undo/redo on top, zoom controls centered.
  *  Undo/redo act on keymap edits, which View Matrix mode disables for its
@@ -75,8 +90,11 @@ export interface KeymapToolbarProps {
  *  disabled buttons in the toolbar. */
 export function KeymapToolbar({
   typingTestMode, viewMatrixActive, canUndo, canRedo, onUndo, onRedo, scale, onScaleChange,
+  labelViewActive, onToggleLabelView,
+  labelsVisible, onToggleLabelsVisible, hasLabels,
 }: KeymapToolbarProps) {
   const { t } = useTranslation()
+
   const zoomButtonClass = `${toggleButtonClass(false)} disabled:opacity-30 disabled:pointer-events-none`
 
   // Zoom controls are shared between two placements: the side toolbar in
@@ -115,12 +133,52 @@ export function KeymapToolbar({
           </Tooltip>
         </>
       )}
+      {/* Label view toggle — the entry point for Key Notes (user-authored
+          semantic legends). Lives with undo/redo rather than in the picker
+          because it REPLACES the picker when on, so it has to stay reachable
+          from a surface that's visible in both states. */}
+      {!typingTestMode && !viewMatrixActive && onToggleLabelView && (
+        <Tooltip content={labelViewActive ? 'Hide labels editor' : 'Edit key labels'} side="right">
+          <button
+            type="button"
+            data-testid="label-view-button"
+            aria-label={labelViewActive ? 'Hide labels editor' : 'Edit key labels'}
+            aria-pressed={!!labelViewActive}
+            className={toggleButtonClass(!!labelViewActive)}
+            onClick={onToggleLabelView}
+          >
+            <Tags size={ICON_MD} aria-hidden="true" />
+          </button>
+        </Tooltip>
+      )}
+      {/* Show/hide the labels on the keys — separate from the editor toggle
+          above so labels can be flipped off without opening (or closing) the
+          editing panel. Only offered once at least one label exists, since
+          otherwise it would appear to do nothing. */}
+      {!typingTestMode && !viewMatrixActive && onToggleLabelsVisible && hasLabels && (
+        <Tooltip content={labelsVisible ? 'Hide labels on keys' : 'Show labels on keys'} side="right">
+          <button
+            type="button"
+            data-testid="labels-visible-button"
+            aria-label={labelsVisible ? 'Hide labels on keys' : 'Show labels on keys'}
+            aria-pressed={!!labelsVisible}
+            className={toggleButtonClass(!!labelsVisible)}
+            onClick={onToggleLabelsVisible}
+          >
+            {labelsVisible
+              ? <Eye size={ICON_MD} aria-hidden="true" />
+              : <EyeOff size={ICON_MD} aria-hidden="true" />}
+          </button>
+        </Tooltip>
+      )}
       <div className="flex-1" />
+
       {!viewMatrixActive && zoomControls}
       <div className="flex-1" />
     </div>
   )
 }
+
 
 export interface ViewMatrixZoomRowProps {
   scale: number
