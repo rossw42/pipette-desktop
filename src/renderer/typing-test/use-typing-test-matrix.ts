@@ -17,10 +17,11 @@ import type { TypingTestConfig } from './types'
 import type { TypingTestState } from './run-state'
 import type { TypingAnalyticsEventPayload } from '../../shared/types/typing-analytics'
 import {
-  extractSwitchLayer,
+  classifyLayerAction,
   resolveEffectiveCodeWithLayer,
   matrixFrameEdges,
 } from './matrix-layers'
+
 import { MatrixAnalyticsQueue } from './matrix-analytics-queue'
 import { PressDurationTracker } from './matrix-press-duration'
 import { MatrixLayerLatch } from './matrix-layer-latch'
@@ -133,7 +134,37 @@ export function useTypingTestMatrix<TPreparedEvent>(
       const resolved = resolveEffectiveCodeWithLayer(edge.row, edge.col, keymap, sortedLayers, bl)
       if (!resolved) continue
       const { code, layer: eventLayer } = resolved
-      latched.latch(edge.key, extractSwitchLayer(code))
+
+      // Classify what this press does to the layer state. Momentary ops
+      // (MO/LT/LM) latch against the key so their release drops them;
+      // sticky ops (TG/TT/TO) mutate the latch's toggle set instead, which
+      // deliberately OUTLIVES the release — that's what makes a `TG(2)`
+      // "gaming mode" key actually move the typing view onto layer 2 and
+      // keep it there. `latch()` is still called for every press (with a
+      // null target for non-momentary keys) so the key occupies a slot and
+      // its release edge stays a no-op rather than an unknown-key case.
+      const action = classifyLayerAction(code)
+      latched.latch(edge.key, action?.kind === 'momentary' ? action.layer : null)
+      if (action) {
+        // TT's momentary arm is covered by the momentary branch above when
+        // a single press resolves that way; here it takes the toggle path,
+        // matching QMK's behaviour once the tap count is reached. Erring
+        // toward "toggle" keeps the view on the layer the user is actually
+        // looking at rather than snapping back mid-session.
+        if (action.kind === 'toggle' || action.kind === 'tapToggle') {
+          latched.toggleLayer(action.layer)
+        } else if (action.kind === 'to' || action.kind === 'default') {
+          // TO(n) replaces the whole toggle state (QMK `layer_move`).
+          // DF/PDF change the DEFAULT layer, which this hook can't write
+          // (the base layer is host state, set from the device or the
+          // layer selector) — but for the purpose of "which layer should
+          // the typing view show", landing on n and clearing other toggles
+          // is the same observable outcome, so they share the path rather
+          // than silently doing nothing as before.
+          latched.moveToLayer(action.layer)
+        }
+      }
+
 
       if (!prepare || !frame) continue
       // Authorize + tag at press time, not when this press eventually
