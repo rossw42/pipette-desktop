@@ -48,11 +48,49 @@ floating always-on-top overlay while you play.
 - Where a label would collide with a View Matrix `row,col` legend, **View Matrix wins** — those
   legends are diagnostic and need to stay truthful (`mergeLabelOverrides`).
 
-**Implementation** (14 files, ~1.5k lines, mostly new)
+**Save / Load** — `localStorage` is per-machine and per-Electron-profile, so labels wouldn't
+survive a reinstall or reach a second computer, and they appear in none of Pipette's existing
+exports (a `.vil` carries keycodes, not annotations). The panel therefore has **Save** and
+**Load** buttons:
+
+- **Save** writes every label for the keyboard to a pretty-printed `.json` (small, hand-editable,
+  diffs well in a dotfiles repo). Disabled when there's nothing to save.
+- **Load** *merges* by default — labels the file doesn't mention are kept. **Shift-click** to
+  *replace* instead, for "restore this backup exactly".
+- The result appears inline under the buttons (`key-notes-io-result`). Cancelling the file dialog
+  says nothing, because cancelling isn't an error.
+- The file is a **sidecar**, deliberately not folded into `.vil`: that format is read by Vial
+  itself and other tools, and smuggling non-standard keys into it risks confusing them.
+- Import is strict about the envelope (`kind: "pipette-key-notes"`, `version`) so picking the
+  wrong file is rejected rather than wiping your labels, but lenient inside `notes` — malformed
+  entries are skipped and *counted*, and the count is reported, so one bad key can't cost you
+  the rest of the file.
+- Uses the pre-existing `exportJson` / `sideloadJson` IPC, so this added **no new IPC channel and
+  no main-process code**.
+
+The file looks like this:
+
+```json
+{
+  "kind": "pipette-key-notes",
+  "version": 1,
+  "keyboard": "<uid>",
+  "exportedAt": "2026-08-06T15:51:00.000Z",
+  "notes": {
+    "0": { "2,1": { "legend": "Bulldoze" } },
+    "1": { "2,1": { "legend": "Zoom In", "desc": "optional long form" } }
+  }
+}
+```
+
+`keyboard` is informational — import does **not** require it to match, so labels can be moved
+onto a rebuilt or renamed board (a common reason to have a backup at all).
+
+**Implementation** (15 files, ~2k lines, mostly new)
 
 | File | Role |
 |---|---|
-| `src/renderer/components/editors/key-notes-store.ts` | store, `useKeyNotes()` hook, `formatLegend`, `buildKeyNoteOverrides`, `mergeLabelOverrides` |
+| `src/renderer/components/editors/key-notes-store.ts` | store, `useKeyNotes()` hook, `formatLegend`, `buildKeyNoteOverrides`, `mergeLabelOverrides`, plus the file layer (`serializeKeyNotes`, `parseKeyNotesFile`, `mergeKeyNotes`) |
 | `src/renderer/components/editors/KeyNotesPanel.tsx` | the editing panel |
 | `src/renderer/components/editors/KeymapEditor.tsx` | wires the hook into editor + typing view |
 | `src/renderer/components/editors/keymap-editor-toolbar.tsx` | tag + eye toolbar buttons |
@@ -88,9 +126,9 @@ which silently breaks parsing. Also `TO(n)` sets the `ON_PRESS` bit on **both** 
 
 ### Tests
 
-53 tests cover the above and run in CI-less isolation:
+90 tests cover the above and run in CI-less isolation:
 
-- `src/renderer/components/editors/__tests__/KeymapEditor.keyNotes.test.tsx` (24) — renders the
+- `src/renderer/components/editors/__tests__/KeymapEditor.keyNotes.test.tsx` (31) — renders the
   **real** `KeyboardWidget` and asserts on SVG `<text>` scoped by `data-key-pos`. All four test
   keys deliberately hold the *same* keycode (`KC_A`), so only genuinely position-keyed data can
   make them differ.
@@ -147,7 +185,7 @@ git rebase --abort                         # bail out, nothing lost
 |---|---|
 | *(none)* | typecheck (both tsconfigs) + full test suite |
 | `--tests-only` | skip typecheck |
-| `--ours` | only the fork's 3 test files — seconds instead of minutes |
+| `--ours` | only the fork's 4 test files — seconds instead of minutes |
 
 Exits 0 only if there are **zero new failures**. Upstream ships some already-failing tests, so
 the script carries an allowlist (`KNOWN_UPSTREAM_FAILURES`) and reports failures as either

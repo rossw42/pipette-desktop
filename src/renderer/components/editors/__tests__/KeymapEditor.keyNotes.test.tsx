@@ -367,3 +367,114 @@ describe('Label view — store helpers', () => {
     expect(merged?.get('0,1')?.outer).toBe('Picker')
   })
 })
+
+// Saving labels to a file / loading them back, driven through the real buttons.
+// The store-level and hook-level behaviour is covered in `key-notes-file.test.ts`;
+// what matters here is that the panel's controls are wired to it at all, and that
+// a loaded file actually redraws the keys.
+describe('Label view — save to / load from a file', () => {
+  it('offers Save and Load in the panel', () => {
+    render(<KeymapEditor {...baseProps()} />)
+    fireEvent.click(screen.getByTestId('label-view-button'))
+    expect(screen.getByTestId('key-notes-save-file')).toBeInTheDocument()
+    expect(screen.getByTestId('key-notes-load-file')).toBeInTheDocument()
+  })
+
+  it('cannot Save with nothing to save, but can once a label exists', () => {
+    const { container } = render(<KeymapEditor {...baseProps()} />)
+    fireEvent.click(screen.getByTestId('label-view-button'))
+    expect(screen.getByTestId('key-notes-save-file')).toBeDisabled()
+
+    fireEvent.click(container.querySelector('[data-key-pos="0,0"]') as Element)
+    fireEvent.change(screen.getByTestId('key-notes-input'), { target: { value: 'Bulldoze' } })
+    expect(screen.getByTestId('key-notes-save-file')).not.toBeDisabled()
+  })
+
+  it('hands the authored labels to the file layer and confirms inline', async () => {
+    const exportJson = vi.fn().mockResolvedValue({ success: true, filePath: '/tmp/x.json' })
+    window.vialAPI = { ...window.vialAPI, exportJson } as unknown as typeof window.vialAPI
+
+    const { container } = render(<KeymapEditor {...baseProps()} />)
+    openLabelEditorAndType(container, '0,0', 'Bulldoze')
+    fireEvent.click(screen.getByTestId('key-notes-save-file'))
+
+    const status = await screen.findByTestId('key-notes-io-result')
+    expect(status.textContent).toContain('Saved 1 label')
+    const [content] = exportJson.mock.calls[0] as [string]
+    expect(JSON.parse(content).notes['0']['0,0'].legend).toBe('Bulldoze')
+  })
+
+  it('draws labels on the keys after loading a file', async () => {
+    const sideloadJson = vi.fn().mockResolvedValue({
+      success: true,
+      data: {
+        kind: 'pipette-key-notes',
+        version: 1,
+        notes: { '0': { '1,1': { legend: 'Loaded' } } },
+      },
+    })
+    window.vialAPI = { ...window.vialAPI, sideloadJson } as unknown as typeof window.vialAPI
+
+    const { container } = render(<KeymapEditor {...baseProps()} />)
+    // Starts as the plain keycode legend...
+    expect(labelsAtPos(container, '1,1')).not.toContain('Loaded')
+
+    fireEvent.click(screen.getByTestId('label-view-button'))
+    fireEvent.click(screen.getByTestId('key-notes-load-file'))
+
+    const status = await screen.findByTestId('key-notes-io-result')
+    expect(status.textContent).toContain('Merged in 1 label')
+    // ...and the loaded label is now actually rendered on that key.
+    expect(labelsAtPos(container, '1,1')).toContain('Loaded')
+  })
+
+  it('reports a bad file inline and leaves existing labels alone', async () => {
+    // A .vil keymap, i.e. the most likely wrong pick in the file dialog.
+    const sideloadJson = vi.fn().mockResolvedValue({ success: true, data: { version: 1, uid: '0x1' } })
+    window.vialAPI = { ...window.vialAPI, sideloadJson } as unknown as typeof window.vialAPI
+
+    const { container } = render(<KeymapEditor {...baseProps()} />)
+    openLabelEditorAndType(container, '0,0', 'Bulldoze')
+    fireEvent.click(screen.getByTestId('key-notes-load-file'))
+
+    const status = await screen.findByTestId('key-notes-io-result')
+    expect(status.textContent).toContain('Not a Pipette labels file')
+    expect(labelsAtPos(container, '0,0')).toContain('Bulldoze')
+  })
+
+  it('says nothing when the user cancels the dialog', async () => {
+    const sideloadJson = vi.fn().mockResolvedValue({ success: false, error: 'cancelled' })
+    window.vialAPI = { ...window.vialAPI, sideloadJson } as unknown as typeof window.vialAPI
+
+    render(<KeymapEditor {...baseProps()} />)
+    fireEvent.click(screen.getByTestId('label-view-button'))
+    fireEvent.click(screen.getByTestId('key-notes-load-file'))
+
+    // Wait for the click's promise to settle before asserting the absence.
+    await screen.findByTestId('key-notes-panel')
+    expect(screen.queryByTestId('key-notes-io-result')).not.toBeInTheDocument()
+  })
+
+  it('shift-clicking Load replaces instead of merging', async () => {
+    const sideloadJson = vi.fn().mockResolvedValue({
+      success: true,
+      data: {
+        kind: 'pipette-key-notes',
+        version: 1,
+        notes: { '0': { '1,1': { legend: 'Loaded' } } },
+      },
+    })
+    window.vialAPI = { ...window.vialAPI, sideloadJson } as unknown as typeof window.vialAPI
+
+    const { container } = render(<KeymapEditor {...baseProps()} />)
+    openLabelEditorAndType(container, '0,0', 'Bulldoze')
+    fireEvent.click(screen.getByTestId('key-notes-load-file'), { shiftKey: true })
+
+    const status = await screen.findByTestId('key-notes-io-result')
+    expect(status.textContent).toContain('Replaced with 1 label')
+    // The pre-existing label is gone; the loaded one is drawn.
+    expect(labelsAtPos(container, '0,0')).not.toContain('Bulldoze')
+    expect(labelsAtPos(container, '1,1')).toContain('Loaded')
+  })
+})
+

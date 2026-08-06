@@ -65,9 +65,11 @@ const KNOWN_UPSTREAM_FAILURES = [
 /** Test files that exist only in this fork — the things a sync could break. */
 const FORK_TEST_FILES = [
   'src/renderer/components/editors/__tests__/KeymapEditor.keyNotes.test.tsx',
+  'src/renderer/components/editors/__tests__/key-notes-file.test.ts',
   'src/renderer/typing-test/__tests__/matrix-layer-latch-toggle.test.ts',
   'src/renderer/typing-test/__tests__/useTypingTest.toggleLayer.test.ts',
 ]
+
 
 const argv = process.argv.slice(2)
 const testsOnly = argv.includes('--tests-only')
