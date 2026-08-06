@@ -156,11 +156,11 @@ node scripts/sync-upstream.mjs    # fetch upstream → rebase main onto upstream
 node scripts/verify-fork.mjs      # typecheck + tests, with upstream's own broken tests filtered out
 ```
 
-> **Run these with `node`, not `pnpm fork:sync` / `pnpm fork:verify`.** pnpm performs its own
-> dependency check before running *any* script, and on this machine that check tries to compile
-> `better-sqlite3` and fails (no VS C++ build tools) — so the pnpm aliases die before the script
-> starts. The `fork:sync` / `fork:verify` aliases in `package.json` are kept for when the install
-> is healthy (or on a machine with build tools), and are identical otherwise.
+> **Prefer `node` over `pnpm fork:sync` / `pnpm fork:verify`.** pnpm 11 runs its own dependency
+> check before *any* script, and that re-link is both slow and (historically) destructive here —
+> see [Gotchas](#gotchas-on-this-machine-windows). `verifyDepsBeforeRun: false` in
+> `pnpm-workspace.yaml` disables it, so the aliases work now, but invoking `node` directly can't
+> regress.
 
 ### `sync-upstream.mjs`
 
@@ -262,6 +262,22 @@ pnpm install --force
 
 ## Build & dev
 
+### Launching your fork
+
+```powershell
+cd d:\GitHub\rossw42\pipette-desktop
+pnpm dev
+```
+
+That's it. `pnpm dev` starts electron-vite in watch mode and opens the Pipette window
+(hot reload for the renderer, restart-on-change for main). To run the packaged build
+instead:
+
+```powershell
+pnpm build          # compiles main + preload + renderer into out/
+pnpm dist:win       # produces an installer/portable exe in release/
+```
+
 Standard upstream scripts (`pnpm dev`, `pnpm build`, `pnpm dist:win`, `pnpm test`, `pnpm lint`)
 all work unchanged. Fork-specific additions:
 
@@ -287,15 +303,42 @@ d:\Keyboard Workspace\keymap_labeler\examples\pipette-keynotes-demo-keyboard.jso
 - **`pnpm install` hangs after a pnpm major bump.** It's blocked on an interactive
   *"modules directory will be removed — Proceed? (y/N)"* prompt you can't see. Use
   `pnpm install --force`. `fork:sync` already does.
-- **`better-sqlite3` fails to compile** (`gyp ERR! find VS`) — no Visual Studio C++ build tools
-  installed. Unit tests and typecheck are unaffected, but the Electron app won't launch. Fix:
-  ```powershell
-  winget install Microsoft.VisualStudio.2022.BuildTools   # + "Desktop development with C++"
-  pnpm rebuild better-sqlite3
-  ```
-- **Don't use `pnpm exec` / `npx` for verification.** pnpm auto-runs `pnpm install` before any
-  `exec`, so the better-sqlite3 failure above aborts things that don't need it at all.
-  `verify-fork.mjs` invokes `node node_modules/<pkg>/<entry>` directly to sidestep this.
+
+#### Why `pnpm dev` used to fail — three stacked causes (all fixed, don't undo them)
+
+There are **no Visual Studio C++ build tools on this machine**, and for a while that was believed
+to be fatal. It isn't: all three native deps (`better-sqlite3`, `node-hid`,
+`@paymoapp/active-window`) ship **prebuilt Windows x64 binaries**, so nothing needs compiling.
+What actually broke the launch:
+
+1. **`better-sqlite3`'s install script aborted the entire install.** It was in `allowBuilds`, so
+   pnpm ran its `node-gyp` build, which failed with `gyp ERR! find VS` — and that killed the
+   whole install *before* pnpm wrote the `node_modules/.bin` shims and *before* `electron`
+   unpacked its binary. Symptom: `'electron-vite' is not recognized` and no `electron.exe`
+   anywhere. **Fix:** `better-sqlite3: false` in `allowBuilds` (`pnpm-workspace.yaml`) — skip the
+   source build, use the prebuild in `prebuilds/win32-x64.node`.
+2. **pnpm 11 re-installed before every `pnpm run`, and the re-link deleted
+   `node_modules/electron/dist/`.** Verified directly: binary present → `pnpm dev` → binary gone.
+   **Fix:** `verifyDepsBeforeRun: false`. Note this must go in **`pnpm-workspace.yaml`**, not
+   `.npmrc` — pnpm 11 silently ignores it there (`pnpm config get verifyDepsBeforeRun` returns
+   `undefined` if you get this wrong).
+3. **The `postinstall` hook was a bare `electron-rebuild`**, so its (harmless, expected) failure
+   was fatal. **Fix:** `scripts/postinstall.mjs` — attempts the rebuild, treats failure as a
+   *warning* since prebuilds cover it, then verifies `node_modules/electron/dist/electron.exe`
+   exists and re-runs electron's `install.js` if not. Only a missing Electron binary is fatal now.
+
+**If `electron.exe` ever goes missing again**, this restores it from the local cache
+(`%LOCALAPPDATA%\electron\Cache`) without a reinstall:
+
+```powershell
+node node_modules/electron/install.js
+```
+
+#### Other
+
+- **Don't use `pnpm exec` / `npx` for verification.** `verify-fork.mjs` invokes
+  `node node_modules/<pkg>/<entry>` directly — one less moving part, and immune to whatever pnpm
+  decides to do to `node_modules` on the way in.
 - **`localStorage` in tests**: Node 25's experimental `localStorage` shadows jsdom's and exposes
   *no methods*, so `key-notes-store.ts` treats its in-memory `Map` as authoritative and
   feature-detects `getItem`/`setItem` before touching storage. Use `resetKeyNotesCache()` in
