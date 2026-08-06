@@ -138,6 +138,132 @@ export function resetKeyNotesCache(): void {
   visibleCache.clear()
 }
 
+// ---------------------------------------------------------------------------
+// Save to / load from a file
+//
+// localStorage is per-machine and per-Electron-profile: labels don't survive a
+// reinstall, don't reach a second computer, and aren't in any of Pipette's
+// existing exports (`.vil` carries keycodes, not annotations). So the notes get
+// their own small sidecar file, deliberately separate from `.vil` rather than
+// bolted into it — a `.vil` is consumed by Vial itself and other tools, and
+// smuggling non-standard keys into it risks confusing them.
+//
+// Uses the existing `exportJson` / `sideloadJson` IPC (save/open dialog in the
+// main process), so this adds no new channel and no new main-process code.
+// ---------------------------------------------------------------------------
+
+/** Marker so an import can tell a labels file from any other JSON the user
+ *  might pick in the file dialog. */
+export const KEY_NOTES_FILE_KIND = 'pipette-key-notes'
+/** Bump only on a breaking shape change; readers accept anything <= this. */
+export const KEY_NOTES_FILE_VERSION = 1
+
+export interface KeyNotesFile {
+  kind: typeof KEY_NOTES_FILE_KIND
+  version: number
+  /** Which keyboard these were authored against — informational. Import does
+   *  NOT enforce a match, so labels can be moved onto a rebuilt or renamed
+   *  board (a common reason to have a backup in the first place). */
+  keyboard?: string
+  exportedAt: string
+  notes: KeyNotesByLayer
+}
+
+export function serializeKeyNotes(notes: KeyNotesByLayer, keyboardUid?: string): string {
+  const file: KeyNotesFile = {
+    kind: KEY_NOTES_FILE_KIND,
+    version: KEY_NOTES_FILE_VERSION,
+    ...(keyboardUid && keyboardUid.length > 0 ? { keyboard: keyboardUid } : {}),
+    exportedAt: new Date().toISOString(),
+    notes,
+  }
+  // Pretty-printed: these files are small, hand-editable, and diff nicely in a
+  // dotfiles repo, which is half the point of being able to save them.
+  return JSON.stringify(file, null, 2)
+}
+
+export interface ParsedKeyNotes {
+  notes: KeyNotesByLayer
+  keyboard?: string
+  /** Entries dropped as malformed. Surfaced to the user rather than swallowed,
+   *  so a partially-bad file doesn't silently lose labels. */
+  skipped: number
+}
+
+/** Validate and normalise a parsed labels file.
+ *
+ *  Strict about the envelope (a wrong `kind` is a wrong file, and importing it
+ *  would replace real labels with nonsense) but lenient inside `notes`: unknown
+ *  or malformed entries are counted and skipped so one bad key can't cost the
+ *  user the rest of the file. Returns a string on rejection — the caller shows
+ *  it verbatim. */
+export function parseKeyNotesFile(input: unknown): ParsedKeyNotes | string {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+    return 'Not a labels file (expected a JSON object).'
+  }
+  const file = input as Partial<KeyNotesFile>
+  if (file.kind !== KEY_NOTES_FILE_KIND) {
+    return `Not a Pipette labels file (kind: ${typeof file.kind === 'string' ? file.kind : 'missing'}).`
+  }
+  if (typeof file.version !== 'number' || file.version > KEY_NOTES_FILE_VERSION) {
+    return `Labels file version ${String(file.version)} is newer than this build understands (max ${KEY_NOTES_FILE_VERSION}).`
+  }
+  const rawNotes = file.notes
+  if (rawNotes === null || typeof rawNotes !== 'object' || Array.isArray(rawNotes)) {
+    return 'Labels file has no usable `notes` object.'
+  }
+
+  const notes: KeyNotesByLayer = {}
+  let skipped = 0
+  for (const [layerKey, layerNotes] of Object.entries(rawNotes as Record<string, unknown>)) {
+    // Layer keys are stringified indices; anything else means a different
+    // schema, not a layer we can render.
+    if (!/^\d+$/.test(layerKey)) { skipped += 1; continue }
+    if (layerNotes === null || typeof layerNotes !== 'object' || Array.isArray(layerNotes)) { skipped += 1; continue }
+    const outLayer: Record<string, KeyNote> = {}
+    for (const [pos, note] of Object.entries(layerNotes as Record<string, unknown>)) {
+      // Positions must be `row,col` with integer parts — `buildKeyNoteOverrides`
+      // would drop anything else anyway, so reject here where we can report it.
+      if (!/^\d+,\d+$/.test(pos)) { skipped += 1; continue }
+      if (note === null || typeof note !== 'object') { skipped += 1; continue }
+      const legend = (note as Partial<KeyNote>).legend
+      if (typeof legend !== 'string' || legend.trim().length === 0) { skipped += 1; continue }
+      const desc = (note as Partial<KeyNote>).desc
+      outLayer[pos] = typeof desc === 'string' ? { legend: legend.trim(), desc } : { legend: legend.trim() }
+    }
+    if (Object.keys(outLayer).length > 0) notes[layerKey] = outLayer
+  }
+
+  return { notes, skipped, ...(typeof file.keyboard === 'string' ? { keyboard: file.keyboard } : {}) }
+}
+
+/** Count every label across all layers — for reporting "imported N labels". */
+export function countKeyNotes(notes: KeyNotesByLayer): number {
+  return Object.values(notes).reduce((sum, layer) => sum + Object.keys(layer).length, 0)
+}
+
+/** Deep-merge two note sets, `incoming` winning per key. Layers and keys absent
+ *  from `incoming` are preserved, so importing a one-layer file doesn't wipe the
+ *  others. */
+export function mergeKeyNotes(base: KeyNotesByLayer, incoming: KeyNotesByLayer): KeyNotesByLayer {
+  const out: KeyNotesByLayer = {}
+  for (const [layer, keys] of Object.entries(base)) out[layer] = { ...keys }
+  for (const [layer, keys] of Object.entries(incoming)) out[layer] = { ...(out[layer] ?? {}), ...keys }
+  return out
+}
+
+/** How an import treats labels the keyboard already has. */
+export type KeyNotesImportMode = 'merge' | 'replace'
+
+/** Outcome of a save/load, ready to show inline. `ok: false` with an empty
+ *  message means the user cancelled the file dialog — nothing went wrong, so
+ *  the UI should stay quiet. */
+export interface KeyNotesIoResult {
+  ok: boolean
+  message: string
+}
+
+
 
 
 /** `KeyWidget` draws labels as fixed-size SVG `<text>` with no wrapping and no
@@ -213,7 +339,13 @@ export interface UseKeyNotesReturn {
   /** True when this keyboard has at least one label on any layer — lets the
    *  UI avoid offering a toggle that would visibly do nothing. */
   hasAnyNotes: boolean
+  /** Write every label for this keyboard to a `.json` file the user picks. */
+  saveToFile: () => Promise<KeyNotesIoResult>
+  /** Read labels back from a file. `merge` keeps existing labels that the file
+   *  doesn't mention; `replace` drops them first. */
+  loadFromFile: (mode?: KeyNotesImportMode) => Promise<KeyNotesIoResult>
 }
+
 
 
 /** Per-keyboard notes state. Every instance re-reads on the change event, so
@@ -295,9 +427,79 @@ export function useKeyNotes(keyboardUid?: string): UseKeyNotesReturn {
     [notes],
   )
 
+  const saveToFile = useCallback(async (): Promise<KeyNotesIoResult> => {
+    // Read through the store rather than trusting the `notes` snapshot: the
+    // typing view or overlay may have edited since this component last
+    // rendered, and a backup that silently omits those would be worse than no
+    // backup at all.
+    const current = readKeyNotes(keyboardUid)
+    const count = countKeyNotes(current)
+    if (count === 0) return { ok: false, message: 'Nothing to save — no labels yet.' }
+
+    const api = globalThis.window?.vialAPI
+    if (!api?.exportJson) return { ok: false, message: 'Saving to a file is unavailable in this window.' }
+
+    try {
+      const defaultName = `pipette-labels-${keyboardUid && keyboardUid.length > 0 ? keyboardUid : 'keyboard'}`
+      const result = await api.exportJson(serializeKeyNotes(current, keyboardUid), defaultName)
+      // Cancelling the dialog is a normal choice, not a failure — empty message
+      // tells the UI to say nothing.
+      if (!result.success) {
+        return result.error === 'cancelled'
+          ? { ok: false, message: '' }
+          : { ok: false, message: `Could not save: ${result.error ?? 'unknown error'}` }
+      }
+      return { ok: true, message: `Saved ${count} label${count === 1 ? '' : 's'}.` }
+    } catch (err) {
+      return { ok: false, message: `Could not save: ${String(err)}` }
+    }
+  }, [keyboardUid])
+
+  const loadFromFile = useCallback(async (mode: KeyNotesImportMode = 'merge'): Promise<KeyNotesIoResult> => {
+    const api = globalThis.window?.vialAPI
+    if (!api?.sideloadJson) return { ok: false, message: 'Loading from a file is unavailable in this window.' }
+
+    let raw: unknown
+    try {
+      const result = await api.sideloadJson('Load key labels')
+      if (!result.success) {
+        return result.error === 'cancelled'
+          ? { ok: false, message: '' }
+          : { ok: false, message: `Could not open: ${result.error ?? 'unknown error'}` }
+      }
+      raw = result.data
+    } catch (err) {
+      return { ok: false, message: `Could not open: ${String(err)}` }
+    }
+
+    const parsed = parseKeyNotesFile(raw)
+    if (typeof parsed === 'string') return { ok: false, message: parsed }
+
+    const incomingCount = countKeyNotes(parsed.notes)
+    if (incomingCount === 0) {
+      return { ok: false, message: 'That file contains no usable labels.' }
+    }
+
+    // Merge against the store, not the render snapshot — same reasoning as
+    // saveToFile.
+    const next = mode === 'replace'
+      ? parsed.notes
+      : mergeKeyNotes(readKeyNotes(keyboardUid), parsed.notes)
+    setNotes(next)
+    writeKeyNotes(next, keyboardUid)
+
+    const verb = mode === 'replace' ? 'Replaced with' : 'Merged in'
+    const skipNote = parsed.skipped > 0 ? ` (${parsed.skipped} entr${parsed.skipped === 1 ? 'y' : 'ies'} skipped)` : ''
+    return {
+      ok: true,
+      message: `${verb} ${incomingCount} label${incomingCount === 1 ? '' : 's'}${skipNote}.`,
+    }
+  }, [keyboardUid])
+
   return {
     notes, getLegend, setLegend, clearAll, overridesForLayer,
-    visible, toggleVisible, hasAnyNotes,
+    visible, toggleVisible, hasAnyNotes, saveToFile, loadFromFile,
   }
 }
+
 
