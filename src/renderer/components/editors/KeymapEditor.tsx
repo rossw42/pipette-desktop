@@ -520,7 +520,10 @@ export const KeymapEditor = forwardRef<import('./keymap-editor-types').KeymapEdi
           onClose={toggleLabelView}
           visible={keyNotes.visible}
           onToggleVisible={keyNotes.toggleVisible}
+          onSaveToFile={keyNotes.saveToFile}
+          onLoadFromFile={keyNotes.loadFromFile}
         />
+
       )}
 
 
