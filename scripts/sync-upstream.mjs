@@ -2,13 +2,17 @@
 /**
  * sync-upstream.mjs — repeatable "bring in latest from upstream" for this fork.
  *
- * Strategy: `main` stays a pristine mirror of upstream/main (fast-forward only),
- * and every local change lives on a feature branch that gets REBASED onto the new
- * `main`. That keeps our diff-vs-upstream small, readable and easy to re-apply.
+ * Model: `main` is the fork's own line of development — it carries our commits
+ * on top of upstream's. Syncing REBASES it onto `upstream/main`, so our work
+ * always ends up as a small, readable set of commits at the tip, and
+ * `git diff upstream/main..main` stays easy to review and cherry-pick from.
+ *
+ * (Rebase, not merge: a merge would bury our commits among upstream's and make
+ * "what does this fork actually change?" progressively harder to answer.)
  *
  *   node scripts/sync-upstream.mjs                 # full sync + install
- *   node scripts/sync-upstream.mjs --dry-run       # show what would happen, change nothing
- *   node scripts/sync-upstream.mjs --branch other  # rebase a different feature branch
+ *   node scripts/sync-upstream.mjs --dry-run       # print every step, change nothing
+ *   node scripts/sync-upstream.mjs --branch other  # sync a different branch (default `main`)
  *   node scripts/sync-upstream.mjs --no-install    # skip `pnpm install --force`
  *   node scripts/sync-upstream.mjs --allow-dirty   # don't insist on a clean working tree
  *
@@ -25,8 +29,10 @@ import process from 'node:process'
 
 const UPSTREAM_REMOTE = 'upstream'
 const UPSTREAM_URL = 'https://github.com/darakuneko/pipette-desktop.git'
-const MIRROR_BRANCH = 'main'
-const DEFAULT_FEATURE_BRANCH = 'feat/key-notes-labels'
+/** The branch on upstream we track. */
+const UPSTREAM_BRANCH = 'main'
+/** Our branch — the fork's own line of development. */
+const DEFAULT_OUR_BRANCH = 'main'
 
 const argv = process.argv.slice(2)
 const hasFlag = (name) => argv.includes(`--${name}`)
@@ -88,7 +94,8 @@ const PNPM = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 
 console.log(`${c.bold}Pipette fork \u2192 upstream sync${c.reset}${dryRun ? c.yellow + '  (dry run)' + c.reset : ''}`)
 
-const featureBranch = flagValue('branch') ?? DEFAULT_FEATURE_BRANCH
+const ourBranch = flagValue('branch') ?? DEFAULT_OUR_BRANCH
+const upstreamRef = `${UPSTREAM_REMOTE}/${UPSTREAM_BRANCH}`
 
 // --- 0. sanity ------------------------------------------------------------
 step('Checking repository state')
@@ -98,8 +105,7 @@ try {
   die('not inside a git repository')
 }
 
-const startingBranch = capture('git', ['rev-parse', '--abbrev-ref', 'HEAD'])
-info(`current branch: ${startingBranch}`)
+info(`current branch: ${capture('git', ['rev-parse', '--abbrev-ref', 'HEAD'])}`)
 
 const dirty = capture('git', ['status', '--porcelain', '--untracked-files=no'])
 if (dirty) {
@@ -115,15 +121,11 @@ if (dirty) {
   ok('working tree is clean')
 }
 
-// The feature branch must exist, otherwise there is nothing to rebase.
 try {
-  capture('git', ['rev-parse', '--verify', `refs/heads/${featureBranch}`])
-  ok(`feature branch \`${featureBranch}\` exists`)
+  capture('git', ['rev-parse', '--verify', `refs/heads/${ourBranch}`])
+  ok(`branch \`${ourBranch}\` exists`)
 } catch {
-  die(
-    `feature branch \`${featureBranch}\` does not exist`,
-    'Pass the right one with --branch <name>, or create it from your current work first.'
-  )
+  die(`branch \`${ourBranch}\` does not exist`, 'Pass the right one with --branch <name>.')
 }
 
 // --- 1. upstream remote ---------------------------------------------------
@@ -142,62 +144,44 @@ if (!remotes.includes(UPSTREAM_REMOTE)) {
 step('Fetching upstream')
 runOrDie('git', ['fetch', UPSTREAM_REMOTE, '--tags', '--prune'])
 
-const behind = capture('git', ['rev-list', '--count', `${MIRROR_BRANCH}..${UPSTREAM_REMOTE}/${MIRROR_BRANCH}`])
+const newUpstream = capture('git', ['rev-list', '--count', `${ourBranch}..${upstreamRef}`])
+const ourCommits = capture('git', ['rev-list', '--count', `${upstreamRef}..${ourBranch}`])
 const upstreamDescribe = (() => {
   try {
-    return capture('git', ['describe', '--tags', '--abbrev=0', `${UPSTREAM_REMOTE}/${MIRROR_BRANCH}`])
+    return capture('git', ['describe', '--tags', '--abbrev=0', upstreamRef])
   } catch {
-    return capture('git', ['rev-parse', '--short', `${UPSTREAM_REMOTE}/${MIRROR_BRANCH}`])
+    return capture('git', ['rev-parse', '--short', upstreamRef])
   }
 })()
 
-if (behind === '0') {
-  ok(`already up to date with ${UPSTREAM_REMOTE}/${MIRROR_BRANCH} (${upstreamDescribe})`)
+info(`upstream is at ${upstreamDescribe}`)
+info(`our branch carries ${ourCommits} commit(s) of fork work`)
+if (newUpstream === '0') {
+  ok('already up to date — no new upstream commits')
 } else {
-  ok(`${behind} new upstream commit(s); newest tag/rev: ${upstreamDescribe}`)
+  ok(`${newUpstream} new upstream commit(s) to pick up`)
 }
 
-// --- 3. fast-forward the mirror branch -----------------------------------
-step(`Fast-forwarding \`${MIRROR_BRANCH}\` to ${UPSTREAM_REMOTE}/${MIRROR_BRANCH}`)
-if (behind === '0') {
-  info('nothing to do')
+// --- 3. rebase our work onto the new upstream ----------------------------
+step(`Rebasing \`${ourBranch}\` onto ${upstreamRef}`)
+if (newUpstream === '0') {
+  info('nothing to rebase onto — already current')
 } else {
-  // A non-ff here means someone committed onto `main` — that breaks the model.
-  const ffCheck = spawnSync(
-    'git',
-    ['merge-base', '--is-ancestor', MIRROR_BRANCH, `${UPSTREAM_REMOTE}/${MIRROR_BRANCH}`],
-    { stdio: 'ignore' }
-  )
-  if (ffCheck.status !== 0) {
+  runOrDie('git', ['checkout', ourBranch])
+  const rebaseCode = run('git', ['rebase', upstreamRef])
+  if (rebaseCode !== 0) {
     die(
-      `\`${MIRROR_BRANCH}\` has commits that are not in ${UPSTREAM_REMOTE}/${MIRROR_BRANCH}, so it cannot fast-forward.`,
-      `\`${MIRROR_BRANCH}\` must stay a pristine mirror of upstream. Move those commits onto a feature\n` +
-        `branch, then reset:  git branch rescue ${MIRROR_BRANCH} && git checkout ${MIRROR_BRANCH} && ` +
-        `git reset --hard ${UPSTREAM_REMOTE}/${MIRROR_BRANCH}`
+      'rebase hit conflicts and stopped.',
+      'Resolve them, then:\n' +
+        '  git add <files> && git rebase --continue      # keep going\n' +
+        '  git rebase --abort                            # bail out, nothing lost\n' +
+        `Afterwards just finish the install: ${PNPM} install --force`
     )
   }
-  runOrDie('git', ['checkout', MIRROR_BRANCH])
-  runOrDie('git', ['merge', '--ff-only', `${UPSTREAM_REMOTE}/${MIRROR_BRANCH}`])
-  ok(`\`${MIRROR_BRANCH}\` now matches upstream`)
+  ok('rebase clean')
 }
 
-// --- 4. rebase the feature branch ----------------------------------------
-step(`Rebasing \`${featureBranch}\` onto \`${MIRROR_BRANCH}\``)
-runOrDie('git', ['checkout', featureBranch])
-const rebaseCode = run('git', ['rebase', MIRROR_BRANCH])
-if (rebaseCode !== 0) {
-  die(
-    'rebase hit conflicts and stopped.',
-    'Resolve them, then:\n' +
-      '  git add <files> && git rebase --continue      # keep going\n' +
-      '  git rebase --abort                            # bail out, nothing lost\n' +
-      `Afterwards just finish the install: ${PNPM} install --force`
-
-  )
-}
-ok('rebase clean')
-
-// --- 5. dependencies ------------------------------------------------------
+// --- 4. dependencies ------------------------------------------------------
 step('Installing dependencies')
 if (skipInstall) {
   info('skipped (--no-install)')
@@ -208,14 +192,13 @@ if (skipInstall) {
   ok('dependencies installed')
 }
 
-// --- 6. summary -----------------------------------------------------------
+// --- 5. summary -----------------------------------------------------------
 step('Summary')
 if (!dryRun) {
-  const stat = capture('git', ['diff', '--stat', `${MIRROR_BRANCH}..${featureBranch}`])
-  console.log(`${c.dim}Our diff vs upstream:${c.reset}`)
-  console.log(stat || '    (no differences)')
+  console.log(`${c.dim}What this fork changes vs ${upstreamRef}:${c.reset}`)
+  console.log(capture('git', ['diff', '--stat', `${upstreamRef}..${ourBranch}`]) || '    (no differences)')
   console.log()
-  console.log(capture('git', ['log', '--oneline', '-5', '--decorate']))
+  console.log(capture('git', ['log', '--oneline', '-6', '--decorate']))
 }
 
 console.log(`
@@ -224,8 +207,8 @@ ${c.green}${c.bold}Done.${c.reset} Next steps:
   1. ${c.bold}node scripts/verify-fork.mjs${c.reset}   typecheck + unit tests (FORK.md lists the known-failing upstream tests)
   2. ${c.bold}pnpm rebuild${c.reset}                   rebuild native modules if Electron's version changed
   3. ${c.bold}pnpm dev${c.reset}                       smoke-test the app
-  4. ${c.bold}git push --force-with-lease origin ${featureBranch}${c.reset}
-     ${c.bold}git push origin ${MIRROR_BRANCH}${c.reset}
+  4. ${c.bold}git push --force-with-lease origin ${ourBranch}${c.reset}
+     (force-with-lease because the rebase rewrote our commits)
 `)
 
 if (dryRun) console.log(`${c.yellow}(dry run — nothing was changed)${c.reset}`)

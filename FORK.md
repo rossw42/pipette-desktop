@@ -11,8 +11,8 @@ install instructions and license (GPL-3.0-or-later). **This file only covers wha
 | Upstream | `https://github.com/darakuneko/pipette-desktop` (remote name: `upstream`) |
 | This fork | `https://github.com/rossw42/pipette-desktop` (remote name: `origin`) |
 | Currently based on | upstream **v0.4.15** |
-| Our changes live on | branch **`feat/key-notes-labels`** |
-| `main` | pristine mirror of `upstream/main` — **never commit to it** |
+| Our changes live on | **`main`** — the fork's own line of development, our commits sitting on top of upstream's |
+| Comparing against upstream | `git diff upstream/main..main` |
 
 ---
 
@@ -143,12 +143,16 @@ Run just these: `node scripts/verify-fork.mjs --ours`
 
 ## Keeping this fork current with upstream
 
-Two commands. The whole model is: **`main` mirrors upstream, our work is a feature branch that
-gets rebased on top.** That keeps `git diff main..feat/key-notes-labels` small and readable, and
-makes every future sync boring.
+Two commands. The model is: **`main` is the fork's own line of development**, carrying our
+commits on top of upstream's. Syncing **rebases `main` onto `upstream/main`**, so our work always
+ends up as a small set of commits at the tip, and `git diff upstream/main..main` stays easy to
+review.
+
+Rebase rather than merge, on purpose: a merge would bury our commits among upstream's and make
+"what does this fork actually change?" progressively harder to answer.
 
 ```bash
-node scripts/sync-upstream.mjs    # fetch upstream → fast-forward main → rebase our branch → install
+node scripts/sync-upstream.mjs    # fetch upstream → rebase main onto upstream/main → install
 node scripts/verify-fork.mjs      # typecheck + tests, with upstream's own broken tests filtered out
 ```
 
@@ -164,13 +168,14 @@ node scripts/verify-fork.mjs      # typecheck + tests, with upstream's own broke
 |---|---|
 | *(none)* | full sync + `pnpm install --force` |
 | `--dry-run` | print every step, change nothing — **start here** |
-| `--branch <name>` | rebase a different feature branch (default `feat/key-notes-labels`) |
+| `--branch <name>` | sync a different branch (default `main`) |
 | `--no-install` | skip the install step |
 | `--allow-dirty` | don't insist on a clean working tree |
 
-It refuses to continue rather than do something surprising: dirty tree, missing feature branch,
-or a `main` that can't fast-forward (which would mean someone committed to `main`) all stop with
-an explanation and the exact recovery command.
+It refuses to continue rather than do something surprising: a dirty working tree or a missing
+branch both stop with an explanation, since a rebase needs a clean tree. It also prints how many
+commits of fork work it is about to replay, so a surprising number is visible before anything
+moves.
 
 **If the rebase hits conflicts** it stops and tells you the two ways out:
 
@@ -209,8 +214,8 @@ The first three were confirmed by running those exact files on our branch **and*
 Before running anything, check whether our diff even *reaches* the failing code:
 
 ```bash
-git diff v0.4.15..HEAD --stat -- src/main      # empty ⇒ every src/main file is byte-identical to upstream
-git diff v0.4.15..HEAD --name-only             # the full list of what we changed
+git diff upstream/main..main --stat -- src/main   # empty ⇒ every src/main file is byte-identical to upstream
+git diff upstream/main..main --name-only          # the full list of what we changed
 ```
 
 Our changes are **renderer-only**. So any failure in `src/main/**` cannot be caused by this fork
@@ -220,9 +225,9 @@ this first; only fall back to an A/B test run when the failing file *is* one we 
 If you do need the A/B run, use a **worktree** rather than `git stash` + `git checkout`:
 
 ```bash
-git worktree add -f --detach ../pipette-v0415 v0.4.15
-# ...run tests in ../pipette-v0415 (needs its own `pnpm install`)...
-git worktree remove ../pipette-v0415
+git worktree add -f --detach ../pipette-upstream upstream/main
+# ...run tests in ../pipette-upstream (needs its own `pnpm install`)...
+git worktree remove ../pipette-upstream
 ```
 
 `git stash -u` will try to sweep up untracked files, and if any are locked by another process it
@@ -234,11 +239,10 @@ If a future sync fixes one of these, `verify-fork.mjs` notices and tells you to 
 
 ### Pushing after a sync
 
-The rebase rewrites history, so the feature branch needs a force-push:
+The rebase rewrites our commits (new SHAs on a new base), so `main` needs a force-push:
 
 ```bash
-git push --force-with-lease origin feat/key-notes-labels
-git push origin main
+git push --force-with-lease origin main
 ```
 
 `--force-with-lease` (not `--force`) so you can't clobber anything you haven't seen.
@@ -249,8 +253,8 @@ The script is just these steps, with guardrails:
 
 ```bash
 git fetch upstream --tags --prune
-git checkout main && git merge --ff-only upstream/main
-git checkout feat/key-notes-labels && git rebase main
+git checkout main
+git rebase upstream/main
 pnpm install --force
 ```
 
@@ -306,6 +310,7 @@ Key Notes (#1) is opinionated and stores things client-side, so it may be better
 feature. Either way, keeping our commits small and rebased makes cherry-picking one out easy:
 
 ```bash
-git log --oneline main..feat/key-notes-labels
-git cherry-pick <sha>   # onto a branch off main
+git log --oneline upstream/main..main       # just our commits
+git checkout -b pr/typing-view-toggles upstream/main
+git cherry-pick <sha>
 ```
