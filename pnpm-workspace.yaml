@@ -1,3 +1,16 @@
+# pnpm 11 re-runs a dependency check (and install) before EVERY `pnpm run`
+# script. On this project that is actively harmful: the install re-links
+# `node_modules`, which deletes the unpacked `node_modules/electron/dist/` — so
+# the Electron binary vanishes and `pnpm dev` can't start the app it just built.
+# It also drags better-sqlite3's native rebuild into unrelated commands
+# (`pnpm test`, `pnpm lint`), which fails without VS C++ build tools even though
+# those commands never touch it.
+#
+# Dependencies are still installed normally via an explicit `pnpm install`;
+# this only disables the implicit one. (`scripts/postinstall.mjs` repairs the
+# Electron binary when an install does run.)
+verifyDepsBeforeRun: false
+
 overrides:
   "node-hid>node-addon-api": "^8.7.0"
   # @electron/rebuild's own node-abi dependency doesn't yet map newer
@@ -26,9 +39,20 @@ minimumReleaseAgeExclude:
 # electron-builder needs.
 allowBuilds:
   '@paymoapp/active-window': true
-  better-sqlite3: true
+  # better-sqlite3's install script runs node-gyp, which compiles from SOURCE and
+  # fails without Visual Studio C++ build tools (`gyp ERR! find VS`). That
+  # failure aborts the whole install — before pnpm creates `node_modules/.bin`
+  # shims and before electron unpacks its binary — so `pnpm dev` then fails with
+  # "'electron-vite' is not recognized" and there is no electron.exe to launch.
+  #
+  # It doesn't need building: the package ships prebuilt binaries including
+  # `prebuilds/win32-x64.node`, which load fine (verified by launching the app).
+  # Set this to `true` on a machine WITH build tools if you want a real rebuild;
+  # `pnpm rebuild` remains available either way.
+  better-sqlite3: false
   core-js: false
   electron: true
   electron-winstaller: true
   esbuild: true
   node-hid: true
+
