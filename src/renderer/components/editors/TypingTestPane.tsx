@@ -32,8 +32,14 @@ export function TypingTestPane({
   remappedKeys,
   remappedEncoders,
   remapLabel,
+  labelOverrides,
+  labelsVisible,
+  onToggleLabelsVisible,
+  hasLabels,
   layoutOptions,
   scale,
+
+
   keys,
   layerLabel,
   contentRef,
@@ -271,8 +277,10 @@ export function TypingTestPane({
               remappedKeys={remappedKeys}
               remappedEncoders={remappedEncoders}
               remapLabel={remapLabel}
+              labelOverrides={labelOverrides}
               layoutOptions={layoutOptions}
               heatmapCells={heatmapCells}
+
               heatmapMaxTotal={heatmapMaxTotal}
               heatmapMaxTap={heatmapMaxTap}
               heatmapMaxHold={heatmapMaxHold}
@@ -346,8 +354,12 @@ export function TypingTestPane({
           onViewAnalytics={onViewAnalytics}
           onViewOnlyChange={onViewOnlyChange}
           handleViewOnlyToggle={handleViewOnlyToggle}
+          labelsVisible={labelsVisible}
+          onToggleLabelsVisible={onToggleLabelsVisible}
+          hasLabels={hasLabels}
         />
       )}
+
     </>
   )
 }

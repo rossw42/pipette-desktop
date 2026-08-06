@@ -21,7 +21,15 @@ interface TypingTestPaneViewOnlyMenuProps {
   onViewAnalytics?: (origin: AnalyticsOrigin) => void
   onViewOnlyChange?: (enabled: boolean) => void
   handleViewOnlyToggle: () => void
+  /** Key Notes show/hide. Only rendered when the keyboard actually has
+   *  labels (`hasLabels`) — the editor toolbar's own eye button is
+   *  unreachable from here (the toolbar is hidden in typing-test mode), and
+   *  the overlay is where the labels matter most, so it needs its own. */
+  labelsVisible?: boolean
+  onToggleLabelsVisible?: () => void
+  hasLabels?: boolean
 }
+
 
 /** View-only mode's fixed bottom-right menu (hint bar + panel), split
  *  out of TypingTestPane (file-splitting.md cap) — see
@@ -50,7 +58,9 @@ export function TypingTestPaneViewOnlyMenu({
   onViewAnalytics,
   onViewOnlyChange,
   handleViewOnlyToggle,
+  labelsVisible, onToggleLabelsVisible, hasLabels,
 }: TypingTestPaneViewOnlyMenuProps) {
+
   const { t } = useTranslation()
 
   return (
@@ -117,7 +127,25 @@ export function TypingTestPaneViewOnlyMenu({
               {t('editor.typingTest.alwaysOnTop')}
             </button>
           )}
+          {/* Key Notes show/hide — the overlay's own copy of the editor
+              toolbar's eye button, since that toolbar isn't rendered here.
+              Deliberately does NOT close the menu on click: the keymap is
+              visible behind the panel, so you can see the legends appear and
+              disappear as you toggle. */}
+          {onToggleLabelsVisible && hasLabels && (
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="labels-visible-toggle-overlay"
+              aria-pressed={!!labelsVisible}
+              className={`whitespace-nowrap ${labelsVisible ? BTN_TOGGLE_ACTIVE : BTN_TOGGLE_INACTIVE}`}
+              onClick={onToggleLabelsVisible}
+            >
+              Labels
+            </button>
+          )}
         </div>
+
 
         {/* Separator — what follows is always visible */}
         <div className="mt-1 border-t border-edge-subtle" aria-hidden="true" />
