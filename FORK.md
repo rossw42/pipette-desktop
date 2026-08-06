@@ -262,24 +262,43 @@ pnpm install --force
 
 ## Build & dev
 
-### Launching your fork
+### Running it as a normal app (an .exe you double-click)
+
+Build it once:
 
 ```powershell
 cd d:\GitHub\rossw42\pipette-desktop
+pnpm dist:win
+```
+
+Then run:
+
+```
+d:\GitHub\rossw42\pipette-desktop\dist\win-unpacked\Pipette.exe
+```
+
+That is a **complete, self-contained app** (~570 MB folder, 225 MB exe) — no terminal, no Node,
+no dev server. Make a Desktop shortcut to it and treat it like any installed program. Rebuild
+(`pnpm dist:win`) whenever you change the source.
+
+**About the NSIS installer:** `dist:win` also tries to produce `dist\Pipette-win-x64.exe`, and on
+this machine that final step **crashes** — 7-Zip dies with exit `3221225786` (`0xC0000409`,
+stack-buffer-overrun) while compressing the ~570 MB payload at `-mx=9`. It's a 7za/environment
+failure, not an app failure: everything before it succeeded, and `win-unpacked\Pipette.exe` is
+complete and code-signed by then. You only need the installer to *distribute* the app; to *use*
+it, ignore the crash and run `win-unpacked\Pipette.exe`.
+
+### Running from source (for development)
+
+```powershell
 pnpm dev
 ```
 
-That's it. `pnpm dev` starts electron-vite in watch mode and opens the Pipette window
-(hot reload for the renderer, restart-on-change for main). To run the packaged build
-instead:
+Starts electron-vite in watch mode and opens the window with hot reload for the renderer and
+restart-on-change for main. Slower to start and holds a terminal, but you see edits instantly.
+`pnpm build` alone just compiles into `out/` without packaging.
 
-```powershell
-pnpm build          # compiles main + preload + renderer into out/
-pnpm dist:win       # produces an installer/portable exe in release/
-```
-
-Standard upstream scripts (`pnpm dev`, `pnpm build`, `pnpm dist:win`, `pnpm test`, `pnpm lint`)
-all work unchanged. Fork-specific additions:
+Fork-specific additions:
 
 | Command | Purpose |
 |---|---|
