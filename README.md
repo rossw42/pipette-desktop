@@ -7,6 +7,12 @@ Refining the way you interact with your Vial-powered keyboards.
 Pipette is an independent, Electron-based keymap editor compatible with [Vial](https://get.vial.today/).  \
 Communicates with Vial keyboards via USB HID to configure keymaps, macros, lighting, and more.
 
+> **This is [rossw42](https://github.com/rossw42/pipette-desktop)'s fork** of
+> [darakuneko/pipette-desktop](https://github.com/darakuneko/pipette-desktop). It adds
+> **Key Notes** (user-editable semantic key labels drawn on the keys) and a fix for layer
+> toggles in Typing View. See **[FORK.md](./FORK.md)** for what's different and how the fork
+> is kept in sync with upstream. Everything below is upstream's documentation and applies here too.
+
 [![Electron](https://img.shields.io/badge/Electron-47848F?style=flat&logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![React](https://img.shields.io/badge/React_19-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)

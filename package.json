@@ -28,6 +28,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:dev": "E2E_MODE=dev playwright test",
+    "fork:sync": "node scripts/sync-upstream.mjs",
+    "fork:verify": "node scripts/verify-fork.mjs",
     "generate:language-manifest": "tsx scripts/generate-language-manifest.ts",
     "doc:screenshots": "npx tsx e2e/helpers/doc-capture.ts",
     "doc:guide": "node docs/build-guide.mjs"
