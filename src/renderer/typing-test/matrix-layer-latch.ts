@@ -19,6 +19,35 @@
 export class MatrixLayerLatch {
   private readonly targets = new Map<string, number | null>()
 
+  /** Layers turned on by a STICKY op (TG / TT's toggle arm) and still on.
+   *  Unlike `targets` these are not keyed by matrix position and are not
+   *  dropped on release — that persistence is the entire point, and is
+   *  what a momentary-only latch could never represent (the reason
+   *  `TG(2)` used to leave the typing view stuck on the base layer). */
+  private readonly toggled = new Set<number>()
+
+  /** Flip a toggle layer, mirroring QMK's `layer_invert`. */
+  toggleLayer(layer: number): void {
+    if (this.toggled.has(layer)) this.toggled.delete(layer)
+    else this.toggled.add(layer)
+  }
+
+  /** `TO(n)`: activate exactly one layer, clearing every other toggle —
+   *  QMK's `layer_move` replaces the whole layer state rather than adding
+   *  to it. `TO(0)` therefore reads as "back to base", which is the usual
+   *  way out of a gaming layer. */
+  moveToLayer(layer: number): void {
+    this.toggled.clear()
+    if (layer > 0) this.toggled.add(layer)
+  }
+
+  /** Whether any sticky toggle is currently active — lets the caller skip
+   *  work (and avoid a needless state write) on the common no-toggle path. */
+  hasToggles(): boolean {
+    return this.toggled.size > 0
+  }
+
+
   /** Record the raw target layer a press resolved to (null for a
    * non-layer-switch key). Deliberately NOT Math.max'd against the base
    * layer that was active at press time — see {@link displayLayer} for
@@ -39,7 +68,14 @@ export class MatrixLayerLatch {
    * target left over from before the reset. */
   clear(): void {
     this.targets.clear()
+    // Sticky toggles go too: the physical keyboard's own layer state is
+    // unknowable across a device/keymap change, so starting from base is
+    // the only honest reset. (A still-held momentary key re-latches on its
+    // next frame; a toggle the user left on will be re-flipped the next
+    // time they press it — same recovery either way.)
+    this.toggled.clear()
   }
+
 
   /** The layer set to resolve a new press against, right now: the base
    * layer plus every currently latched (non-null) target, highest
@@ -52,8 +88,14 @@ export class MatrixLayerLatch {
     for (const target of this.targets.values()) {
       if (target != null) layers.add(target)
     }
+    // Sticky toggles participate in resolution exactly like held momentary
+    // targets do — while TG(2) is on, a press anywhere must resolve against
+    // layer 2 first. Without this, keys on a toggled layer would report
+    // their base-layer keycode.
+    for (const layer of this.toggled) layers.add(layer)
     return [...layers].sort((a, b) => b - a)
   }
+
 
   /** The layer the UI indicator should show: the highest of the base
    * layer and every currently latched target. Each target is the raw
@@ -68,6 +110,13 @@ export class MatrixLayerLatch {
     for (const target of this.targets.values()) {
       if (target != null && target > highest) highest = target
     }
+    // Sticky toggles count toward the indicator too — this is the line that
+    // makes TG(2) actually show layer 2 in the typing view (and keep showing
+    // it after the key is released, until it's toggled back off).
+    for (const layer of this.toggled) {
+      if (layer > highest) highest = layer
+    }
     return highest
   }
+
 }
