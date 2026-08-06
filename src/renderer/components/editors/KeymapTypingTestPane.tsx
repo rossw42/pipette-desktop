@@ -47,7 +47,23 @@ export interface KeymapTypingTestPaneProps extends KeymapEditorProps {
   /** Owned by `KeymapEditor` (lowest common ancestor of this pane and
    *  `useInputModes`) — see `LineSnapshot`'s own doc comment. */
   lineSnapshotRef?: RefObject<LineSnapshot | null>
+  /** Per-key legend override keyed `posKey(row, col)`, forwarded verbatim
+   *  to `TypingTestPane` -> `KeyboardPane` -> `KeyboardWidget`. Carries
+   *  Key Notes (semantic per-position legends) into the typing/floating
+   *  view; the editor pane gets the same map via `KeymapPrimaryPane`'s
+   *  `viewMatrixLabelOverrides`. Built for the TEST's effective layer, not
+   *  `currentLayer` — see `key-notes-store.ts`. */
+
+  labelOverrides?: Map<string, { outer: string; inner: string; masked: boolean }>
+  /** Key Notes show/hide — forwarded to view-only mode's popover menu, which
+   *  is the only place to reach it here (the editor toolbar, which has the
+   *  same control, isn't rendered in typing-test mode). */
+  labelsVisible?: boolean
+  onToggleLabelsVisible?: () => void
+  hasLabels?: boolean
 }
+
+
 
 /** Renders the typing-test surface inside `KeymapEditor`'s keymap-surface
  *  container. Pure translation layer: every field here is either forwarded
@@ -77,12 +93,19 @@ export function KeymapTypingTestPane({
   typingHeatmapWindowMin,
   onViewAnalytics,
   keyboardUid, timelineHandoff,
-  lineSnapshotRef,
+  lineSnapshotRef, labelOverrides,
+  labelsVisible, onToggleLabelsVisible, hasLabels,
 }: KeymapTypingTestPaneProps): JSX.Element {
   return (
     <TypingTestPane
       typingTest={typingTest}
+      labelOverrides={labelOverrides}
+      labelsVisible={labelsVisible}
+      onToggleLabelsVisible={onToggleLabelsVisible}
+      hasLabels={hasLabels}
       onConfigChange={onConfigChange}
+
+
       monkeytypeConfig={typingTestMonkeytypeConfig}
       onLanguageChange={onLanguageChange}
       layers={layers}
