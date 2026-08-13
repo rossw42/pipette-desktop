@@ -1,0 +1,9 @@
+[baseline (all killed)]
+    (none)
+[after launching OLD INSTALLED build]
+    4 x C:\Users\garli\AppData\Local\Programs\Pipette\Pipette.exe
+[after ALSO launching FRESH dist build]
+    4 x C:\Users\garli\AppData\Local\Programs\Pipette\Pipette.exe
+    4 x D:\GitHub\rossw42\pipette-desktop\dist\win-unpacked\Pipette.exe
+[fresh dist build alone (old one killed first)]
+    4 x D:\GitHub\rossw42\pipette-desktop\dist\win-unpacked\Pipette.exe

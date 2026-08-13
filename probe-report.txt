@@ -1,0 +1,17 @@
+
+=== pass 1: profile as-is ===
+{
+  "labelEditorButton": "Edit key labels",
+  "showHideLabelsButton": "Hide labels on keys",
+  "keyNoteKeys": [
+    "pipette:key-notes-visible:0xa3d46e63d4179950",
+    "pipette:key-notes:0xa3d46e63d4179950"
+  ]
+}
+
+=== pass 2: no labels authored yet (key-notes cleared) ===
+{
+  "labelEditorButton": "Edit key labels",
+  "showHideLabelsButton": null,
+  "keyNoteKeys": []
+}
