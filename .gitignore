@@ -17,3 +17,13 @@ CLAUDE.md
 .codex
 .env
 .env.*
+
+# local debug/diagnostic artifacts
+builder-store*.log
+builder-store.err.log
+dev-log.txt
+probe-out.txt
+probe-report.txt
+single-instance-report.txt
+tsc-out.txt
+verify.txt
