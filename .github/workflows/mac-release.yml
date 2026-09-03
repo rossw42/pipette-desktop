@@ -1,0 +1,169 @@
+﻿# Fork-only workflow: build the macOS app on a GitHub-hosted Mac runner and
+# attach it to an existing GitHub release.
+#
+# Why this exists: the fork's releases are built on a Windows machine, and
+# electron-builder can only produce macOS targets (.dmg) ON macOS â€” it needs
+# hdiutil and codesign. Upstream's release.yml covers mac too, but it insists
+# the tag equal package.json's version, which our `vX.Y.Z-fork.N` tags never do.
+# Keeping this in its own file means upstream syncs never conflict on it.
+#
+# Signing: the fork has no Apple Developer certificate. An UNSIGNED Electron app
+# will not launch on Apple Silicon at all ("Pipette is damaged"), so when no
+# certificate is configured we ad-hoc sign (identity "-"). Ad-hoc apps are not
+# notarized, so Gatekeeper still shows a warning on first launch; the release
+# notes tell users how to get past it (right-click â†’ Open, or `xattr -cr`).
+# If CSC_LINK / CSC_KEY_PASSWORD / APPLE_* secrets are ever added, the build
+# automatically switches to upstream's real signing + notarization path.
+#
+# Run it from the Actions tab (workflow_dispatch) with the release tag, or push
+# a `v*-fork.*` tag â€” either way the release must already exist, or it is
+# created as a draft for you to fill in.
+
+name: macOS release build (fork)
+
+on:
+  push:
+    tags:
+      - "v*-fork.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and upload to (e.g. v0.4.20-fork.1)"
+        required: true
+        type: string
+      arch:
+        description: "Architecture(s) to build"
+        required: false
+        default: "arm64"
+        type: choice
+        options:
+          - arm64
+          - x64
+          - both
+
+permissions:
+  contents: write
+
+env:
+  # Tests rely on local wall-clock semantics that upstream standardises on JST
+  # (mirrors upstream's ci.yml / release.yml).
+  TZ: Asia/Tokyo
+
+jobs:
+  plan:
+    # Resolve the tag + arch matrix once so both trigger types share one path.
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+            ARCH="${{ inputs.arch }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            ARCH="arm64"
+          fi
+          case "$ARCH" in
+            arm64) MATRIX='{"include":[{"arch":"arm64","os":"macos-latest"}]}' ;;
+            x64)   MATRIX='{"include":[{"arch":"x64","os":"macos-26-intel"}]}' ;;
+            both)  MATRIX='{"include":[{"arch":"arm64","os":"macos-latest"},{"arch":"x64","os":"macos-26-intel"}]}' ;;
+            *) echo "::error::unknown arch '$ARCH'"; exit 1 ;;
+          esac
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "Building $ARCH for release $TAG"
+
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.plan.outputs.tag }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # scripts/postinstall.mjs treats a failed native rebuild as a warning and
+      # falls back to the shipped darwin prebuilds, exactly as it does on Windows.
+      - run: pnpm install --frozen-lockfile
+
+      - name: Sanity-check the fork on this runner (typecheck + the fork's own tests)
+        run: node scripts/verify-fork.mjs --ours
+
+      - run: pnpm exec electron-vite build
+
+
+      - name: Decide how to sign
+        id: sign
+        shell: bash
+        env:
+          HAS_CERT: ${{ secrets.CSC_LINK != '' }}
+        run: |
+          if [ "$HAS_CERT" = "true" ]; then
+            echo "mode=certificate" >> "$GITHUB_OUTPUT"
+            echo "extra=" >> "$GITHUB_OUTPUT"
+            echo "Apple certificate configured â€” using upstream's signing + notarization settings."
+          else
+            echo "mode=adhoc" >> "$GITHUB_OUTPUT"
+            # identity "-" = ad-hoc. Hardened runtime with an ad-hoc signature needs
+            # the disable-library-validation entitlement to launch, and notarization
+            # is impossible without a Developer ID â€” so turn both off for this path.
+            echo "extra=-c.mac.identity=- -c.mac.hardenedRuntime=false -c.mac.notarize=false" >> "$GITHUB_OUTPUT"
+            echo "No Apple certificate in secrets â€” ad-hoc signing (not notarized)."
+          fi
+
+      - name: Build macOS app (${{ matrix.arch }})
+        run: pnpm exec electron-builder --mac --${{ matrix.arch }} --publish never ${{ steps.sign.outputs.extra }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Verify the bundle is signed and launchable
+        shell: bash
+        run: |
+          set -e
+          APP=$(find dist -maxdepth 2 -name "Pipette.app" -print -quit)
+          echo "app bundle: $APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dvv "$APP" 2>&1 | grep -E "^(Identifier|Signature|Authority|TeamIdentifier)" || true
+          ls -la dist/*.dmg
+          shasum -a 256 dist/*.dmg
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pipette-mac-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+      - name: Upload DMG to release ${{ needs.plan.outputs.tag }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          SIGN_MODE: ${{ steps.sign.outputs.mode }}
+        run: |
+          set -e
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $TAG does not exist yet â€” creating it as a DRAFT"
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "Pipette ${TAG#v} (rossw42 fork)" --generate-notes
+          fi
+          gh release upload "$TAG" dist/*.dmg --repo "$GITHUB_REPOSITORY" --clobber
+          echo "uploaded (${SIGN_MODE}-signed):"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | "  \(.name)  \(.size) bytes"'

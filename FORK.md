@@ -307,6 +307,61 @@ failure, not an app failure: everything before it succeeded, and `win-unpacked\P
 complete and code-signed by then. You only need the installer to *distribute* the app; to *use*
 it, ignore the crash and run `win-unpacked\Pipette.exe`.
 
+### Cutting a release
+
+Releases are tagged `vX.Y.Z-fork.N` — upstream's version plus a fork counter — and built here on
+Windows, then the mac build is added by CI (next section). This is what produced `v0.4.20-fork.1`:
+
+```powershell
+node scripts/verify-fork.mjs                     # must say PASS
+pnpm dist:win                                    # -> dist\Pipette-win-x64.exe
+git push --force-with-lease origin main          # if a sync rewrote main
+git tag -a v0.4.20-fork.1 -m 'Pipette 0.4.20 (rossw42 fork)'
+git push origin v0.4.20-fork.1
+gh release create v0.4.20-fork.1 dist\Pipette-win-x64.exe --repo rossw42/pipette-desktop `
+  --title 'Pipette 0.4.20 (rossw42 fork)' --notes-file release-notes.md --latest
+```
+
+Release notes: what the fork adds (one line), the upstream commits picked up since the previous
+fork release (`git log --oneline <prev-upstream-tag>..<new-upstream-tag>`), and the verify result.
+
+### macOS builds (GitHub Actions — can't be done from Windows)
+
+electron-builder only produces `.dmg`s **on macOS** (it needs `hdiutil`/`codesign`), so the mac
+build runs on a GitHub-hosted Mac runner via `.github/workflows/mac-release.yml` — a fork-only
+workflow, kept separate from upstream's `release.yml` (which refuses our `vX.Y.Z-fork.N` tags
+because the tag must equal `package.json`'s version). It attaches the `.dmg` to an existing
+release:
+
+```powershell
+# after the Windows release exists (see "Cutting a release" above):
+gh workflow run mac-release.yml --repo rossw42/pipette-desktop -f tag=v0.4.20-fork.1 -f arch=arm64
+gh run watch --repo rossw42/pipette-desktop --exit-status
+```
+
+`arch` is `arm64` (default, Apple Silicon — `macos-latest`), `x64` (Intel — `macos-26-intel`) or
+`both`. Pushing a `v*-fork.*` tag also triggers it (arm64 only). If the release doesn't exist yet
+the workflow creates it as a **draft**.
+
+**Signing.** The fork has no Apple Developer certificate, and an *unsigned* Electron app won't even
+launch on Apple Silicon ("Pipette is damaged and can't be opened"). So without certificate secrets
+the workflow **ad-hoc signs** (`-c.mac.identity=-`) and disables `hardenedRuntime` + `notarize`
+(an ad-hoc signature can't be notarized, and hardened runtime + ad-hoc needs an extra entitlement
+to load Electron's frameworks). Ad-hoc apps still trip Gatekeeper on first launch, so tell users:
+
+- **Right-click → Open** the app once (then it opens normally), or
+- `xattr -cr /Applications/Pipette.app` to strip the quarantine flag.
+
+If `CSC_LINK` / `CSC_KEY_PASSWORD` / `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`
+are ever added as repo secrets, the same workflow switches to upstream's real signing +
+notarization path with no edits.
+
+The `.dmg` is **not hardware-verified** — nobody on this project has a Mac. The workflow does
+`codesign --verify --deep --strict` on the bundle and runs the fork's own tests on the runner, but
+"launches and talks to a keyboard" needs a real machine. Node-hid's `HID-darwin-*` and
+better-sqlite3's `darwin-*` prebuilds are in the tree, so native deps should be fine.
+
+
 ### Running from source (for development)
 
 ```powershell
