@@ -124,11 +124,21 @@ jobs:
             echo "No Apple certificate in secrets â€” ad-hoc signing (not notarized)."
           fi
 
-      - name: Build macOS app (${{ matrix.arch }})
+      - name: Build macOS app (${{ matrix.arch }}) — ad-hoc signed
+        if: steps.sign.outputs.mode == 'adhoc'
+        # No CSC_*/APPLE_* env here on purpose: `CSC_LINK: ${{ secrets.CSC_LINK }}`
+        # with the secret unset exports an EMPTY string, which electron-builder
+        # treats as a certificate path and fails with "<projectDir> not a file".
         run: pnpm exec electron-builder --mac --${{ matrix.arch }} --publish never ${{ steps.sign.outputs.extra }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Build macOS app (${{ matrix.arch }}) — Developer ID signed + notarized
+        if: steps.sign.outputs.mode == 'certificate'
+        run: pnpm exec electron-builder --mac --${{ matrix.arch }} --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
