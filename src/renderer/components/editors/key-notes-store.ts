@@ -131,11 +131,29 @@ export function writeKeyNotesVisible(visible: boolean, keyboardUid?: string): vo
   globalThis.dispatchEvent?.(new Event(CHANGED_EVENT))
 }
 
-/** Drop the in-memory caches. Exists for tests, which need a clean slate
- *  between cases and can't rely on `localStorage.clear()` existing. */
+/** Drop the in-memory caches AND any persisted keys of ours. Exists for tests,
+ *  which need a clean slate between cases and can't rely on
+ *  `localStorage.clear()` existing.
+ *
+ *  Clearing storage too matters: where `localStorage` is real (jsdom under
+ *  Node ≤ 24, i.e. CI), `readKeyNotes` would otherwise re-read the previous
+ *  test's labels straight back into the freshly emptied cache. Under Node 25
+ *  the storage is method-less so this was invisible locally. */
 export function resetKeyNotesCache(): void {
   memoryCache.clear()
   visibleCache.clear()
+  const ls = usableStorage()
+  if (!ls || typeof ls.removeItem !== 'function' || typeof ls.key !== 'function') return
+  try {
+    const ours: string[] = []
+    for (let i = 0; i < ls.length; i++) {
+      const k = ls.key(i)
+      if (k && (k.startsWith(STORAGE_PREFIX) || k.startsWith(VISIBLE_PREFIX))) ours.push(k)
+    }
+    for (const k of ours) ls.removeItem(k)
+  } catch {
+    // Best effort — a storage that refuses to enumerate can't leak between tests either.
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -435,7 +435,11 @@ node node_modules/electron/install.js
 - **`localStorage` in tests**: Node 25's experimental `localStorage` shadows jsdom's and exposes
   *no methods*, so `key-notes-store.ts` treats its in-memory `Map` as authoritative and
   feature-detects `getItem`/`setItem` before touching storage. Use `resetKeyNotesCache()` in
-  tests, not `localStorage.clear()`.
+  tests, not `localStorage.clear()`. **CI runs Node 24, where jsdom's `localStorage` is real** —
+  so state *does* persist between tests there, and `resetKeyNotesCache()` also removes our
+  `pipette:key-notes*` keys from storage. To reproduce CI's behaviour locally on Node 25:
+  `$env:NODE_OPTIONS='--no-experimental-webstorage'` before running vitest (the bare
+  `node --no-experimental-webstorage` flag doesn't reach vitest's worker threads).
 
 ---
 
