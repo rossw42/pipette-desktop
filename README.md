@@ -10,7 +10,7 @@ Communicates with Vial keyboards via USB HID to configure keymaps, macros, light
 > ### This is [rossw42](https://github.com/rossw42/pipette-desktop)'s fork
 >
 > A fork of [darakuneko/pipette-desktop](https://github.com/darakuneko/pipette-desktop),
-> currently based on upstream **v0.4.15**. What it adds:
+> currently based on upstream **v0.4.20**. What it adds:
 >
 > - **Key Notes** — user-editable semantic key labels drawn on the keys (per keyboard, per
 >   layer, per matrix position), visible in the editor, Typing View, and the always-on-top
