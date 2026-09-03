@@ -10,7 +10,7 @@ install instructions and license (GPL-3.0-or-later). **This file only covers wha
 |---|---|
 | Upstream | `https://github.com/darakuneko/pipette-desktop` (remote name: `upstream`) |
 | This fork | `https://github.com/rossw42/pipette-desktop` (remote name: `origin`) |
-| Currently based on | upstream **v0.4.15** |
+| Currently based on | upstream **v0.4.20** |
 | Our changes live on | **`main`** — the fork's own line of development, our commits sitting on top of upstream's |
 | Comparing against upstream | `git diff upstream/main..main` |
 
@@ -214,7 +214,7 @@ the script carries an allowlist (`KNOWN_UPSTREAM_FAILURES`) and reports failures
 *known upstream* or *NEW — ours to fix*. Without that, every sync turns into "wait, are these
 17 failures mine?" archaeology.
 
-**Known-broken upstream tests as of v0.4.15** — 17 failures across 4 files, none ours:
+**Known-broken upstream tests as of v0.4.15** (re-confirmed on v0.4.20 — same 17 failures, still none ours):
 
 | File | Failures | Symptom |
 |---|---|---|
