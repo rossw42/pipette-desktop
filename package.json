@@ -95,7 +95,8 @@
     "files": [
       "out/**/*",
       "package.json",
-      "build/icon.png"
+      "build/icon.png",
+      "!**/node_modules/@napi-rs/canvas*/**"
     ],
     "artifactName": "${productName}-${os}-${arch}.${ext}",
     "generateUpdatesFilesForAllChannels": false,
